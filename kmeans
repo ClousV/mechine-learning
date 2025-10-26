@@ -1,0 +1,188 @@
+# K聚类分析
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from sklearn.cluster import KMeans
+from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import silhouette_score
+
+# 1. 数据加载与预处理
+# --------------------------------------------------
+# 读取Excel文件
+df = pd.read_excel('')
+
+# 提取MJD时间戳并转换为二维数组
+timestamps = df['MJD'].values.reshape(-1, 1)
+
+# 标准化数据（K-Means对特征尺度敏感）
+scaler = StandardScaler()
+timestamps_scaled = scaler.fit_transform(timestamps)
+
+# 2. 确定最佳聚类数（肘部法则+轮廓系数）
+# --------------------------------------------------
+max_clusters = 10 # 最大尝试聚类数(FRB 2012 and FRB 2014 use 10,FRB 2018 use 100)
+inertia = []
+silhouette_scores = []
+
+for k in range(2, max_clusters+1):
+    kmeans = KMeans(n_clusters=k, init='k-means++', random_state=42)
+    kmeans.fit(timestamps_scaled)
+    inertia.append(kmeans.inertia_)
+    
+    # 仅当k>1时计算轮廓系数
+    if k > 1:
+        score = silhouette_score(timestamps_scaled, kmeans.labels_)
+        silhouette_scores.append(score)
+
+# 可视化评估指标
+plt.figure(figsize=(15, 5))
+
+plt.rcParams['xtick.labelsize'] = 18  # X轴刻度字体
+plt.rcParams['ytick.labelsize'] = 18  # Y轴刻度字体
+plt.rcParams['axes.labelsize'] = 17   # 坐标轴标题字体
+
+# 肘部法则图
+plt.subplot(1, 2, 1)
+plt.plot(range(2, max_clusters+1), inertia, 'bo-')
+plt.xlabel('Number of clusters')
+plt.ylabel('Inertia')
+#plt.title('Elbow Method')
+
+# 轮廓系数图
+plt.subplot(1, 2, 2)
+plt.plot(range(2, max_clusters+1), silhouette_scores, 'ro-')  # 直接使用原始列表
+plt.xlabel('Number of clusters')
+plt.ylabel('Silhouette Score')
+#plt.title('Silhouette Analysis')
+plt.tight_layout()
+#plt.savefig('figure5.png', dpi=300)
+plt.show()
+
+# 3. 执行K-Means聚类
+# --------------------------------------------------
+# 手动选择最佳k值（根据上述图表）
+best_k = int(input("根据肘部法则和轮廓系数，请输入最佳聚类数："))
+
+# 训练最终模型
+final_kmeans = KMeans(n_clusters=best_k, init='k-means++', random_state=42)
+final_kmeans.fit(timestamps_scaled)
+
+# 获取聚类结果
+cluster_labels = final_kmeans.labels_
+centers_scaled = final_kmeans.cluster_centers_
+
+# 将聚类中心转换回原始时间单位
+centers = scaler.inverse_transform(centers_scaled).flatten()
+sorted_centers = np.sort(centers)
+
+# 4. 周期模式分析
+# --------------------------------------------------
+# 计算簇间间隔
+gaps = np.diff(sorted_centers)
+print("\n聚类中心间隔分析:")
+print(f"平均间隔: {np.mean(gaps):.2f} 天")
+print(f"间隔标准差: {np.std(gaps):.2f} 天")
+print("具体间隔天数:", np.round(gaps, 2))
+
+# 寻找近似周期
+unique_gaps, counts = np.unique(np.round(gaps, 1), return_counts=True)
+common_gap = unique_gaps[np.argmax(counts)]
+print(f"\n最常见的近似间隔: {common_gap:.1f} 天（出现{counts.max()}次）")
+
+# 5. 可视化结果
+# --------------------------------------------------
+plt.figure(figsize=(15, 6))
+
+# 原始时间分布
+plt.subplot(1, 2, 1)
+plt.scatter(df['MJD'], np.zeros_like(df['MJD']), 
+            c=cluster_labels, cmap='tab10', s=50, alpha=0.7)
+plt.scatter(sorted_centers, np.zeros(best_k), 
+            marker='X', s=50, c='red', label='Cluster Centers')
+plt.xlabel('TIME(MJD)')
+plt.gca().get_yaxis().set_visible(False)
+#plt.title('Time distribution and clustering centers of FRB 20121102')
+plt.legend()
+# 先创建图例对象
+leg1 = plt.legend()
+
+# 然后修改特定文本的字体大小
+for text in leg1.get_texts():
+    if "Cluster Centers" in text.get_text():
+        text.set_fontsize(15)  # 设置更大的字体
+
+# 间隔分布直方图
+plt.subplot(1, 2, 2)
+plt.hist(gaps, bins=7, edgecolor='k', alpha=0.7  #(about bins:FRB 2012 and FRB 2014 use 3,FRB 2018 use 7)
+plt.axvline(common_gap, color='r', linestyle='--',
+           label=f'Common Gap: {common_gap:.1f} days')
+plt.xlabel('Time Gap Between Clusters (days)')
+plt.ylabel('Frequency')
+plt.ylim(0, 20)
+#plt.title('Cluster Interval Distribution')
+plt.legend()
+# 先创建图例对象
+leg2 = plt.legend()
+
+# 然后修改特定文本的字体大小
+for text in leg2.get_texts():
+    if "Common Gap" in text.get_text():
+        text.set_fontsize(15)  # 设置更大的字体
+    
+
+plt.tight_layout()
+#plt.savefig('figure18.png', dpi=300)
+plt.show()
+
+# 6. 输出详细聚类信息
+# --------------------------------------------------
+print("\n详细聚类分析:")
+for i, center in enumerate(sorted_centers):
+    cluster_events = df[cluster_labels == i]
+    print(f"\nCluster {i+1}:")
+    print(f"• 中心时间: {center:.2f} MJD")
+    print(f"• 包含事件数: {len(cluster_events)}")
+    print(f"• 时间范围: {cluster_events['TIME(MJD)'].min():.2f} - {cluster_events['MJD'].max():.2f}")
+    print(f"• 平均SNR: {cluster_events['SNR'].mean():.2f}")
+    print(f"• 平均DM: {cluster_events['DM'].mean():.2f}")
+
+# 在聚类分析后添加详细的不确定度报告
+print("\n===== 簇中心不确定度分析 =====")
+
+for i in range(best_k):
+    cluster_data = df[cluster_labels == i]['MJD']
+    min_val = cluster_data.min()
+    max_val = cluster_data.max()
+    center = centers[i]
+    uncertainty = (max_val - min_val) / 2
+    
+    print(f"\n簇 {i+1} (中心: {center:.1f} MJD):")
+    print(f"• 时间范围: {min_val:.1f} - {max_val:.1f} MJD")
+    print(f"• 簇内间距: {max_val-min_val:.1f} 天")
+    print(f"• 中心位置不确定度: ±{uncertainty:.1f} 天")
+    print(f"• 包含事件数: {len(cluster_data)}")
+    
+    # 计算相对误差
+    if center > 0:
+        relative_error = uncertainty / center * 100
+        print(f"• 相对误差: {relative_error:.2f}%")
+
+# 添加周期估计的不确定度
+if len(gaps) > 0:
+    gap_uncertainty = np.std(gaps) / np.sqrt(len(gaps))  # 标准误差
+    print(f"\n周期估计: {common_gap:.1f} ± {gap_uncertainty:.1f} 天")
+
+
+# 7. 周期验证（可选）
+# --------------------------------------------------
+if common_gap > 0:
+    print("\n建议候选周期验证:")
+    print(f"尝试使用 {common_gap:.1f} 天周期进行相位折叠分析")
+    print("代码示例:")
+    print(f'''
+    candidate_period = {common_gap:.1f}
+    phases = (df['MJD'] % candidate_period) / candidate_period
+    plt.hist(phases, bins=20)
+    plt.title('Phase Folded Distribution')
+    plt.show()
+    ''')
